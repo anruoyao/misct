@@ -1,0 +1,48 @@
+{
+    "applinks": {
+        "apps": [],
+        "details": [
+            {
+                "appIDs": [
+                    "WGTZ762S3W.com.retrytech.chatter"
+                ],
+                "components": [
+                    {
+                        "/": "*",
+                        "?": {
+                            "$web_only": "true"
+                        },
+                        "exclude": true,
+                        "comment": "Exclude web_only links"
+                    },
+                    {
+                        "/": "*",
+                        "?": {
+                            "%24web_only": "true"
+                        },
+                        "exclude": true,
+                        "comment": "Exclude encoded web_only links"
+                    },
+                    {
+                        "/": "/e/*",
+                        "exclude": true,
+                        "comment": "Exclude /e/* paths"
+                    },
+                    {
+                        "/": "*",
+                        "comment": "Allow all other paths"
+                    },
+                    {
+                        "/": "/",
+                        "comment": "Allow root path"
+                    }
+                ]
+            }
+        ]
+    },
+    "webcredentials": {
+        "apps": [
+            "WGTZ762S3W.com.retrytech.chatter"
+        ]
+    }
+}

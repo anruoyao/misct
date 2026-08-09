@@ -1,0 +1,15 @@
+[
+    {
+        "relation": [
+            "delegate_permission/common.handle_all_urls"
+        ],
+        "target": {
+            "namespace": "android_app",
+            "package_name": "com.retrytech.chatter",
+            "sha256_cert_fingerprints": [
+                "17:92:61:50:90:28:AF:DE:DD:D2:4B:C8:83:DD:CE:EE:C6:32:E8:A7:F3:D9:DE:DE:39:86:D3:47:C2:AB:EC:C1",
+                "8C:C5:A2:95:15:92:5E:67:28:F1:87:B5:F7:D9:D3:CE:88:9C:C3:39:D0:D6:0E:5F:0B:D6:92:C3:CA:58:D8:46"
+            ]
+        }
+    }
+]

@@ -1,0 +1,44 @@
+# ========== 环境与密钥（敏感，禁止上传） ==========
+.env
+.env.backup
+.env.production
+.env.*.local
+auth.json
+googleCredentials.json
+storage/*.key
+
+# ========== 数据库备份 / 压缩包（敏感，禁止上传） ==========
+mysqlbackup
+*.sql
+*.sql.gz
+config.zip
+*.backup
+
+# ========== 依赖与构建产物 ==========
+/node_modules
+/public/build
+/public/hot
+/public/storage
+/vendor
+
+# ========== 日志与缓存 ==========
+.phpunit.result.cache
+storage/logs/*.log
+storage/logs/laravel.log
+
+# ========== 本地配置 ==========
+Homestead.json
+Homestead.yaml
+
+# ========== 调试日志 ==========
+npm-debug.log
+yarn-error.log
+
+# ========== 编辑器 / IDE ==========
+/.fleet
+/.idea
+/.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
