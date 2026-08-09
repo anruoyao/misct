@@ -204,6 +204,6 @@ Route::post('deleteUsernameRestrictions', [RestrictionController::class, 'delete
 
 Route::get('admob', [SettingsController::class, 'admob'])->middleware(['checkLogin'])->name('admob');
 Route::post('admobAndroid', [SettingsController::class, 'admobAndroid'])->middleware(['checkLogin'])->name('admobAndroid');
-Route::post('admobiOS', [SettingsController::class, 'admobiOS'])->middleware(['checkLogin'])->name('admobAndroid');
+Route::post('admobiOS', [SettingsController::class, 'admobiOS'])->middleware(['checkLogin'])->name('admobiOS');
 
 Route::post('addFakeData', [SettingsController::class, 'addFakeData'])->middleware(['checkLogin'])->name('addFakeData');

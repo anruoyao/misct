@@ -18,7 +18,6 @@ class LoginController extends Controller
         if ($setting) {
             Session::put('app_name', $setting->app_name);
         }
-        Artisan::call('storage:link');
         if (Session::get('user_name')) {
             return redirect('/index');
         }
