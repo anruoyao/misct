@@ -24,6 +24,8 @@ return [
     'login_success'             => '登录成功。',
     'email_already_verified'    => '邮箱已验证，可直接登录。',
     'reset_link_sent'           => '若邮箱存在，重置链接已发送。',
+    'validation_failed'         => '提交的数据不合法。',
+    'mail_config_missing'       => '（服务器尚未配置邮件服务，请联系管理员。）',
 
     // 验证 / 重置结果页文案
     'verify_success_title'  => '邮箱验证成功',

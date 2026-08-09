@@ -6,8 +6,10 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 
 /**
@@ -18,6 +20,9 @@ use Illuminate\Validation\Rules\Password as PasswordRule;
  * 内置的签名 URL + Password Broker 完成，邮件链接直接指回后端的 GET 接口。
  *
  * 社交登录（Google / Apple）仍走原 addUser 接口，不受影响。
+ *
+ * 注意：为兼容前端 ApiService（非 2xx 会抛异常且不调用 completion），
+ * 这里所有失败都返回 HTTP 200 + status=false，校验失败也走同样的格式。
  */
 class EmailAuthController extends Controller
 {
@@ -33,13 +38,19 @@ class EmailAuthController extends Controller
      */
     public function register(Request $request): JsonResponse
     {
-        $data = $request->validate([
+        $validator = Validator::make($request->all(), [
             'identity'     => ['required', 'email', 'max:255'],
             'password'     => ['required', 'string', PasswordRule::min(8)],
             'full_name'    => ['required', 'string', 'max:255'],
             'device_token' => ['nullable', 'string', 'max:500'],
             'device_type'  => ['nullable', 'integer', 'in:0,1'],
         ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator);
+        }
+
+        $data = $validator->validated();
 
         $exists = User::where('identity', $data['identity'])->exists();
         if ($exists) {
@@ -58,8 +69,11 @@ class EmailAuthController extends Controller
         $user->device_token  = $data['device_token'] ?? '';
         $user->save();
 
-        // 发送邮箱验证邮件
-        $user->sendEmailVerificationNotification();
+        // 发送邮箱验证邮件。SMTP 未配置或发送失败不影响注册本身，
+        // 用户可以稍后通过 /resendVerification 重发。
+        $this->safeSendMail(function () use ($user) {
+            $user->sendEmailVerificationNotification();
+        });
 
         // 重新读出，保证字段、默认值齐全
         $user = User::find($user->id);
@@ -82,12 +96,18 @@ class EmailAuthController extends Controller
      */
     public function login(Request $request): JsonResponse
     {
-        $data = $request->validate([
+        $validator = Validator::make($request->all(), [
             'identity'     => ['required', 'email'],
             'password'     => ['required', 'string'],
             'device_token' => ['nullable', 'string', 'max:500'],
             'device_type'  => ['nullable', 'integer', 'in:0,1'],
         ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator);
+        }
+
+        $data = $validator->validated();
 
         $user = User::where('identity', $data['identity'])->first();
 
@@ -128,11 +148,15 @@ class EmailAuthController extends Controller
      */
     public function resendVerification(Request $request): JsonResponse
     {
-        $data = $request->validate([
+        $validator = Validator::make($request->all(), [
             'identity' => ['required', 'email'],
         ]);
 
-        $user = User::where('identity', $data['identity'])->first();
+        if ($validator->fails()) {
+            return $this->validationError($validator);
+        }
+
+        $user = User::where('identity', $request->input('identity'))->first();
         if (!$user) {
             // 不暴露存在性，统一返回成功
             return response()->json([
@@ -148,11 +172,15 @@ class EmailAuthController extends Controller
             ]);
         }
 
-        $user->sendEmailVerificationNotification();
+        $mailSent = $this->safeSendMail(function () use ($user) {
+            $user->sendEmailVerificationNotification();
+        });
 
         return response()->json([
             'status'  => true,
-            'message' => trans('string.verification_link_sent'),
+            'message' => $mailSent
+                ? trans('string.verification_link_sent')
+                : trans('string.verification_link_sent') . ' ' . trans('string.mail_config_missing'),
         ]);
     }
 
@@ -213,14 +241,20 @@ class EmailAuthController extends Controller
      */
     public function forgotPassword(Request $request): JsonResponse
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'identity' => ['required', 'email'],
         ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator);
+        }
 
         $user = User::where('identity', $request->input('identity'))->first();
         if ($user) {
             $token = Password::broker()->createToken($user);
-            $user->sendPasswordResetNotification($token);
+            $this->safeSendMail(function () use ($user, $token) {
+                $user->sendPasswordResetNotification($token);
+            });
         }
 
         return response()->json([
@@ -272,11 +306,19 @@ class EmailAuthController extends Controller
      */
     public function resetPassword(Request $request)
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'token'                 => ['required'],
             'email'                 => ['required', 'email'],
             'password'              => ['required', 'string', 'confirmed', PasswordRule::min(8)],
         ]);
+
+        if ($validator->fails()) {
+            return $this->renderHtml(
+                trans('string.reset_failed_title'),
+                trans('string.reset_failed_body'),
+                false
+            );
+        }
 
         $user = User::where('identity', $request->input('email'))->first();
         if (!$user) {
@@ -309,11 +351,45 @@ class EmailAuthController extends Controller
     }
 
     /**
+     * 校验失败时统一返回 200 + status=false，方便前端处理。
+     */
+    private function validationError(\Illuminate\Contracts\Validation\Validator $validator): JsonResponse
+    {
+        $messages = $validator->errors()->all();
+        $msg = $messages[0] ?? trans('string.validation_failed');
+
+        return response()->json([
+            'status'  => false,
+            'message' => $msg,
+        ]);
+    }
+
+    /**
+     * 安全发送邮件：捕获异常并记录日志，不影响主流程。
+     * SMTP 未配置时邮件发送会失败，但注册/找回密码等操作本身仍应成功。
+     *
+     * @return bool 是否发送成功
+     */
+    private function safeSendMail(callable $callback): bool
+    {
+        try {
+            $callback();
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('Mail send failed: ' . $e->getMessage(), [
+                'exception' => $e,
+            ]);
+            return false;
+        }
+    }
+
+    /**
      * 简单渲染一个 HTML 结果页（验证 / 重置完成）。
      */
     private function renderHtml(string $title, string $body, bool $success): \Illuminate\Http\Response
     {
         $color = $success ? '#16a34a' : '#dc2626';
+        $icon  = $success ? '&#10003;' : '&#10007;';
         $html = <<<HTML
 <!DOCTYPE html>
 <html lang="zh">
@@ -331,7 +407,7 @@ class EmailAuthController extends Controller
 </head>
 <body>
   <div class="card">
-    <div class="icon">{$success ? '&#10003;' : '&#10007;'}</div>
+    <div class="icon">{$icon}</div>
     <h1>{$title}</h1>
     <p>{$body}</p>
   </div>

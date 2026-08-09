@@ -24,6 +24,8 @@ return [
     'login_success'             => 'Signed in successfully.',
     'email_already_verified'    => 'Email already verified. You can sign in directly.',
     'reset_link_sent'           => 'If the email exists, a password reset link has been sent.',
+    'validation_failed'         => 'Submitted data is invalid.',
+    'mail_config_missing'       => '(Email service is not configured on the server. Please contact the administrator.)',
 
     // 验证 / 重置结果页文案
     'verify_success_title'  => 'Email Verified',
