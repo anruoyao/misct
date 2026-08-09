@@ -329,10 +329,24 @@ class EmailAuthController extends Controller
             );
         }
 
-        // Laravel 9 中 PasswordBroker 没有 tokenRepository() 方法，
-        // 通过 Password facade 直接拿 token repository（PasswordBrokerManager::tokenRepository()）
-        $tokenRepo = Password::tokenRepository();
-        if (!$tokenRepo->exists($user, $request->input('token'))) {
+        // 直接查 password_resets 表校验 token。
+        // Laravel 9 的 PasswordBroker 没有暴露 tokenRepository() 方法，
+        // 用 DB facade 操作 password_resets 表最简单可靠。
+        $tokenRecord = \DB::table('password_resets')
+            ->where('email', $user->getEmailForPasswordReset())
+            ->first();
+
+        if (!$tokenRecord || !hash_equals($tokenRecord->token, hash('sha256', $request->input('token')))) {
+            return $this->renderHtml(
+                trans('string.reset_failed_title'),
+                trans('string.reset_failed_body'),
+                false
+            );
+        }
+
+        // 检查 token 是否过期（config/auth.php 中 expire=60 分钟）
+        $expiresAt = now()->subMinutes(config('auth.passwords.users.expire', 60));
+        if (\Carbon\Carbon::parse($tokenRecord->created_at)->lt($expiresAt)) {
             return $this->renderHtml(
                 trans('string.reset_failed_title'),
                 trans('string.reset_failed_body'),
@@ -343,7 +357,10 @@ class EmailAuthController extends Controller
         $user->password = Hash::make($request->input('password'));
         $user->save();
 
-        $tokenRepo->delete($user);
+        // 删除已使用的 token
+        \DB::table('password_resets')
+            ->where('email', $user->getEmailForPasswordReset())
+            ->delete();
 
         return $this->renderHtml(
             trans('string.reset_success_title'),
