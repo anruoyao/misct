@@ -332,11 +332,13 @@ class EmailAuthController extends Controller
         // 直接查 password_resets 表校验 token。
         // Laravel 9 的 PasswordBroker 没有暴露 tokenRepository() 方法，
         // 用 DB facade 操作 password_resets 表最简单可靠。
+        // 注意：Laravel 默认的 DatabaseTokenRepository 使用 Hash::make() 存 token，
+        // 所以库里是 bcrypt 哈希，必须用 Hash::check() 比较，不能用 sha256 + hash_equals。
         $tokenRecord = \DB::table('password_resets')
             ->where('email', $user->getEmailForPasswordReset())
             ->first();
 
-        if (!$tokenRecord || !hash_equals($tokenRecord->token, hash('sha256', $request->input('token')))) {
+        if (!$tokenRecord || !Hash::check($request->input('token'), $tokenRecord->token)) {
             return $this->renderHtml(
                 trans('string.reset_failed_title'),
                 trans('string.reset_failed_body'),
