@@ -329,7 +329,9 @@ class EmailAuthController extends Controller
             );
         }
 
-        $tokenRepo = Password::broker()->tokenRepository();
+        // Laravel 9 中 PasswordBroker 没有 tokenRepository() 方法，
+        // 通过 Password facade 直接拿 token repository（PasswordBrokerManager::tokenRepository()）
+        $tokenRepo = Password::tokenRepository();
         if (!$tokenRepo->exists($user, $request->input('token'))) {
             return $this->renderHtml(
                 trans('string.reset_failed_title'),
