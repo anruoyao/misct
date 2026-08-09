@@ -37,6 +37,12 @@ return [
     'reset_failed_title'    => 'Password Reset Failed',
     'reset_failed_body'     => 'The link has expired or the credentials are invalid. Please request a new password reset link.',
 
+    // 密码被修改安全通知
+    'password_changed_subject' => 'Your :app account password has been changed',
+    'password_changed_line1'   => 'Your account password was just changed successfully. If this was you, no further action is required.',
+    'password_changed_line2'   => 'If you did not make this change, your account may have been accessed by someone else. Please reset your password immediately using the "Forgot Password" feature in the app.',
+    'password_changed_line3'   => 'To keep your account secure, change your password regularly and avoid reusing it across multiple sites.',
+
     // 重置密码表单
     'email_label'             => 'Email',
     'password_label'          => 'New Password',

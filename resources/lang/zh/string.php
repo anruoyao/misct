@@ -37,6 +37,12 @@ return [
     'reset_failed_title'    => '密码重置失败',
     'reset_failed_body'     => '链接已失效或凭据不正确，请重新申请找回密码。',
 
+    // 密码被修改安全通知
+    'password_changed_subject' => '您的 :app 账号密码已被修改',
+    'password_changed_line1'   => '您的账号密码刚刚被成功修改。如果这是您本人的操作，请忽略此邮件。',
+    'password_changed_line2'   => '如果您没有进行此操作，您的账号可能已被他人访问。请立即通过 App 的“忘记密码”功能重新设置密码。',
+    'password_changed_line3'   => '为保障账号安全，建议定期更换密码，且不要在多个站点使用相同密码。',
+
     // 重置密码表单
     'email_label'             => '邮箱',
     'password_label'          => '新密码',

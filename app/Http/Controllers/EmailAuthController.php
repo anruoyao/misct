@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Notifications\PasswordChanged;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -363,6 +364,12 @@ class EmailAuthController extends Controller
         \DB::table('password_resets')
             ->where('email', $user->getEmailForPasswordReset())
             ->delete();
+
+        // 发送密码修改安全通知邮件。SMTP 未配置或发送失败不影响重置流程本身，
+        // 用户依然可以用新密码登录。
+        $this->safeSendMail(function () use ($user) {
+            $user->notify(new PasswordChanged());
+        });
 
         return $this->renderHtml(
             trans('string.reset_success_title'),
