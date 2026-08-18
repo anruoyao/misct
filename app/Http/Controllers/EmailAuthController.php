@@ -78,11 +78,12 @@ class EmailAuthController extends Controller
 
         // 重新读出，保证字段、默认值齐全
         $user = User::find($user->id);
+        \App\Services\ChatService::ensureWsKey($user);
 
         return response()->json([
             'status'  => true,
             'message' => trans('string.verification_link_sent'),
-            'data'    => $user,
+            'data'    => $user->makeVisible('ws_key'),
         ]);
     }
 
@@ -134,10 +135,13 @@ class EmailAuthController extends Controller
         $user->device_token = $data['device_token'] ?? $user->device_token;
         $user->save();
 
+        // 确保用户有 ws_key（WebSocket 私有频道密钥，仅本人可见）
+        \App\Services\ChatService::ensureWsKey($user);
+
         return response()->json([
             'status'  => true,
             'message' => trans('string.login_success'),
-            'data'    => $user,
+            'data'    => $user->makeVisible('ws_key'),
         ]);
     }
 

@@ -635,11 +635,12 @@ class UserController extends Controller
         if ($user) {
             $user->device_type = (int) $request->device_type;
             $user->device_token = $request->device_token;
-            $user->save();
+            \App\Services\ChatService::ensureWsKey($user);
+            $user = User::find($user->id);
             return response()->json([
                 'status' => false,
                 'message' => '用户已存在',
-                'data' => $user,
+                'data' => $user->makeVisible('ws_key'),
             ]);
         } else {
             $user = new User();
@@ -650,10 +651,11 @@ class UserController extends Controller
             $user->device_token = $request->device_token;
             $user->save();
             $user = User::where('id', $user->id)->first();
+            \App\Services\ChatService::ensureWsKey($user);
             return response()->json([
                 'status' => true,
                 'message' => '用户添加成功',
-                'data' => $user,
+                'data' => $user->makeVisible('ws_key'),
             ]);
         }
     }

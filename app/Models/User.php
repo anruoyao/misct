@@ -28,6 +28,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'login_type',
         'device_type',
         'device_token',
+        'ws_key',
         'email_verified_at',
         'username',
         'bio',
@@ -54,6 +55,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $hidden = [
         'password',
         'remember_token',
+        'ws_key', // 私有 WS 频道密钥，默认不序列化；本人登录/注册时显式 makeVisible
     ];
 
     /**

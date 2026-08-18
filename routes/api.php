@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\EmailAuthController;
 use App\Http\Controllers\FAQsController;
 use App\Http\Controllers\InterestController;
@@ -157,6 +158,24 @@ Route::post('fetchRoomsIAmIn', [RoomController::class, 'fetchRoomsIAmIn'])->midd
 Route::post('fetchSetting', [SettingsController::class, 'fetchSetting'])->middleware('checkHeader');
 Route::post('pushNotificationToSingleUser', [SettingsController::class, 'pushNotificationToSingleUser'])->middleware('checkHeader');
 Route::post('generateAgoraToken', [SettingsController::class, 'generateAgoraToken'])->middleware('checkHeader');
+
+/*
+|--------------------------------------------------------------------------
+| 本地化聊天（替代 Firestore 实时数据库，同时供网页版复用）
+|--------------------------------------------------------------------------
+*/
+Route::prefix('chat')->middleware('checkHeader')->group(function () {
+    Route::post('getOrCreateConversation', [ChatController::class, 'getOrCreateConversation']);
+    Route::post('sendMessage', [ChatController::class, 'sendMessage']);
+    Route::post('fetchMessages', [ChatController::class, 'fetchMessages']);
+    Route::post('fetchConversations', [ChatController::class, 'fetchConversations']);
+    Route::post('markAsRead', [ChatController::class, 'markAsRead']);
+    Route::post('setUnread', [ChatController::class, 'setUnread']);
+    Route::post('clearChat', [ChatController::class, 'clearChat']);
+    Route::post('deleteChat', [ChatController::class, 'deleteChat']);
+    Route::post('acceptRequest', [ChatController::class, 'acceptRequest']);
+    Route::post('rejectRequest', [ChatController::class, 'rejectRequest']);
+});
 
 Route::post('fetchPlatformNotification', [AdminController::class, 'fetchPlatformNotification'])->middleware('checkHeader');
 
