@@ -34,7 +34,8 @@ use Workerman\Worker;
  */
 class ServeWebSocket extends Command
 {
-    protected $signature = 'ws:serve';
+    // workerAction 直接透传给 Workerman：start / stop / restart / status / connections
+    protected $signature = 'ws:serve {workerAction=start : start|stop|restart|status|connections} {--d : 以守护进程模式运行}';
 
     protected $description = '启动自建 WebSocket 服务器（Workerman）';
 
@@ -53,6 +54,14 @@ class ServeWebSocket extends Command
         if ($token === '') {
             $this->error('请在 .env 中配置 WS_INTERNAL_TOKEN');
             return 1;
+        }
+
+        // Workerman 的 Worker::runAll() 从 $argv 解析命令，
+        // 而 artisan 会占用 $argv[1]，这里重写成 Workerman 期望的形式
+        global $argv;
+        $argv = ['artisan', $this->argument('workerAction')];
+        if ($this->option('d')) {
+            $argv[] = '-d';
         }
 
         // ---- 内部 HTTP 服务：发布事件 / 查询在线状态 ----
