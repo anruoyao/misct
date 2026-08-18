@@ -71,7 +71,8 @@ class ServeWebSocket extends Command
             $path = $request->path();
 
             // 解析请求体：兼容 JSON 与 form-encoded 两种格式
-            $rawBody = $request->body();
+            // 注意：Workerman 5 的 HttpRequest 用 rawBody()（v4 是 body()）
+            $rawBody = method_exists($request, 'rawBody') ? $request->rawBody() : $request->body();
             $body = json_decode($rawBody, true);
             if (!is_array($body)) {
                 parse_str($rawBody, $body);
