@@ -69,17 +69,28 @@ class ServeWebSocket extends Command
         $http->count = 1;
         $http->onMessage = function (TcpConnection $connection, HttpRequest $request) use ($token) {
             $path = $request->path();
-            $auth = $request->header('x-internal-token', $request->get('token', ''));
+
+            // 解析请求体：兼容 JSON 与 form-encoded 两种格式
+            $rawBody = $request->body();
+            $body = json_decode($rawBody, true);
+            if (!is_array($body)) {
+                parse_str($rawBody, $body);
+            }
+
+            // token 可来自 header / query / body
+            $auth = $request->header('x-internal-token');
+            if ($auth === null || $auth === '') {
+                $auth = $request->get('token', $body['token'] ?? '');
+            }
 
             if ($auth !== $token) {
                 return $connection->send(new HttpResponse(403, [], json_encode(['status' => false, 'message' => 'forbidden'])));
             }
 
             if ($path === '/publish' && $request->method() === 'POST') {
-                $body = json_decode($request->body(), true) ?: [];
                 $channel = $body['channel'] ?? '';
                 $event   = $body['event'] ?? '';
-                $data    = $body['data'] ?? [];
+                $data    = is_array($body['data'] ?? null) ? $body['data'] : [];
 
                 if (!$this->isValidChannel($channel) || $event === '') {
                     return $connection->send(new HttpResponse(200, [], json_encode(['status' => false, 'message' => 'bad payload'])));
