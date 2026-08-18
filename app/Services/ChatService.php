@@ -221,7 +221,7 @@ class ChatService
 
         // ---- 实时推送（失败不影响消息发送结果）----
         try {
-            $payload = $message->toClientArray();
+            $payload = array_merge($message->toClientArray(), ['conversationId' => (string) $conversation->id]);
 
             // 1) 会话频道：正在这个聊天页面的设备
             WsBroadcaster::publish($conversation->channelName(), 'message.new', $payload);
@@ -364,13 +364,17 @@ class ChatService
 
     protected static function messagePreview(ChatMessage $message): string
     {
+        // 图片/视频若带附言（msg）则优先展示附言
+        if ($message->msg !== null && $message->msg !== '') {
+            return (string) $message->msg;
+        }
         switch ($message->msg_type) {
             case 'IMAGE':
                 return 'Image';
             case 'VIDEO':
                 return 'Video';
             default:
-                return (string) ($message->msg ?? '');
+                return '';
         }
     }
 
