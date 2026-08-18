@@ -2,33 +2,32 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 /**
  * WebSocket 广播网关。
  *
- * Laravel 业务代码通过本类与 ws:serve 进程（Workerman）通信：
- * - publish()  向某个频道广播事件（内部 HTTP POST）
- * - isOnline() 查询用户是否有活跃 WS 连接
+ * 业务代码通过本类发布实时事件 / 查询在线状态：
+ * - publish()  写入 chat_events 表，ws:serve 进程（Workerman）每 250ms
+ *              轮询本表并推送给订阅了对应频道的 WebSocket 连接
+ * - isOnline() 查询 users.is_online（由 WS 进程在订阅/断开时维护）
  *
- * 两个方法都不会抛异常：WS 进程未启动时只记日志、返回失败，
- * 不影响主业务流程（降级为收不到实时推送，仍可轮询接口）。
+ * 两个方法都不会抛异常，WS 进程未启动时业务照常（只是收不到实时推送）。
  */
 class WsBroadcaster
 {
     public static function publish(string $channel, string $event, array $data): bool
     {
         try {
-            $response = Http::timeout(3)->post(self::baseUrl() . '/publish', [
-                'token'   => env('WS_INTERNAL_TOKEN', ''),
-                'channel' => $channel,
-                'event'   => $event,
-                'data'    => $data,
+            DB::table('chat_events')->insert([
+                'channel'    => $channel,
+                'event'      => $event,
+                'data'       => json_encode($data, JSON_UNESCAPED_UNICODE),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
-            return $response->ok() && (bool) $response->json('status');
+            return true;
         } catch (\Throwable $e) {
-            Log::warning('WS publish failed: ' . $e->getMessage());
             return false;
         }
     }
@@ -36,19 +35,9 @@ class WsBroadcaster
     public static function isOnline(int $userId): bool
     {
         try {
-            $response = Http::timeout(3)->get(self::baseUrl() . '/online', [
-                'token' => env('WS_INTERNAL_TOKEN', ''),
-                'user'  => $userId,
-            ]);
-            return $response->ok() && (bool) ($response->json('online') ?? false);
+            return (int) (DB::table('users')->where('id', $userId)->value('is_online') ?? 0) === 1;
         } catch (\Throwable $e) {
-            Log::warning('WS isOnline failed: ' . $e->getMessage());
             return false;
         }
-    }
-
-    protected static function baseUrl(): string
-    {
-        return 'http://127.0.0.1:' . (int) env('WS_HTTP_PORT', 6002);
     }
 }

@@ -3,19 +3,16 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Workerman\Connection\TcpConnection;
-use Workerman\Protocols\Http\Request as HttpRequest;
-use Workerman\Protocols\Http\Response as HttpResponse;
+use Workerman\Timer;
 use Workerman\Worker;
 
 /**
- * 自建 WebSocket 服务器（替代 Firebase Cloud Firestore 实时监听 + FCM 在线推送）。
+ * 自建 WebSocket 服务器（替代 Firestore 实时监听 + FCM 在线推送）。
  *
- * 通过 `php artisan ws:serve` 启动，建议配合 Supervisor 常驻：
- *
- *   监听端口（.env 可配置）：
- *   - WS_PORT      默认 6001：客户端 WebSocket，经 nginx 反代 wss://域名/ws
- *   - WS_HTTP_PORT 默认 6002：仅绑定 127.0.0.1，供 Laravel 内部发布事件 / 查询在线状态
+ * 通过 `php artisan ws:serve start --d` 启动（crontab 守护见 ws-keeper.sh），
+ * nginx 将 https://域名/ws 反代到本进程的 WS_PORT（默认 6001）。
  *
  * 客户端协议（JSON 文本帧）：
  *   -> {"type":"subscribe","channels":["user.7.ab12..","conv.5.cd34.."]}
@@ -24,37 +21,31 @@ use Workerman\Worker;
  *   -> {"type":"ping"}    <- {"type":"pong"}
  *   <- {"type":"event","channel":"...","event":"...","data":{...}}
  *
- * 内部 HTTP 协议（需 WS_INTERNAL_TOKEN）：
- *   POST /publish {token, channel, event, data}  向频道内所有连接广播事件
- *   GET  /online?token=&user=                    查询用户是否在线（按 user.{id}. 频道判断）
+ * 事件来源：PHP-FPM 侧把要广播的事件写入 chat_events 表（WsBroadcaster），
+ * 本进程每 250ms 轮询一次并推送给订阅者 —— 单进程内闭环，无跨进程状态问题。
  *
- * 在线判定：客户端订阅了以 user.{id}. 开头的频道即视为该用户在线，
- * 断开或取消订阅时计数递减，减到 0 视为离线。单进程（count=1）运行，
- * 状态全部保存在进程内存中，规模到数千连接无压力。
+ * 在线判定：客户端订阅 user.{id}.* 频道即视为该用户在线（写 users.is_online），
+ * 所有连接断开后置离线。isOnline() 供离线 FCM 兜底判断使用。
  */
 class ServeWebSocket extends Command
 {
-    // workerAction 直接透传给 Workerman：start / stop / restart / status / connections
-    protected $signature = 'ws:serve {workerAction=start : start|stop|restart|status|connections} {--d : 以守护进程模式运行}';
+    // workerAction 直接透传给 Workerman：start / stop / restart / status
+    protected $signature = 'ws:serve {workerAction=start : start|stop|restart|status} {--d : 以守护进程模式运行}';
 
-    protected $description = '启动自建 WebSocket 服务器（Workerman）';
+    protected $description = '启动自建 WebSocket 服务器（Workerman，聊天实时通道）';
 
     /** @var array<string, array<int, TcpConnection>> 频道 => 连接集合 */
     protected array $channelClients = [];
 
-    /** @var array<int, int> userId => 订阅了其用户频道的连接数 */
+    /** @var array<int, int> userId => 订阅了其用户频道的连接数（本进程内） */
     protected array $onlineUsers = [];
+
+    /** @var int 已处理到的 chat_events.id */
+    protected int $lastEventId = 0;
 
     public function handle()
     {
-        $wsPort   = (int) (env('WS_PORT', 6001));
-        $httpPort = (int) (env('WS_HTTP_PORT', 6002));
-        $token    = (string) env('WS_INTERNAL_TOKEN', '');
-
-        if ($token === '') {
-            $this->error('请在 .env 中配置 WS_INTERNAL_TOKEN');
-            return 1;
-        }
+        $wsPort = (int) (env('WS_PORT', 6001));
 
         // Workerman 的 Worker::runAll() 从 $argv 解析命令，
         // 而 artisan 会占用 $argv[1]，这里重写成 Workerman 期望的形式
@@ -64,58 +55,45 @@ class ServeWebSocket extends Command
             $argv[] = '-d';
         }
 
-        // ---- 内部 HTTP 服务：发布事件 / 查询在线状态 ----
-        $http = new Worker("http://127.0.0.1:{$httpPort}");
-        $http->count = 1;
-        $http->onMessage = function (TcpConnection $connection, HttpRequest $request) use ($token) {
-            $path = $request->path();
-
-            // 解析请求体：兼容 JSON 与 form-encoded 两种格式
-            // 注意：Workerman 5 的 HttpRequest 用 rawBody()（v4 是 body()）
-            $rawBody = method_exists($request, 'rawBody') ? $request->rawBody() : $request->body();
-            $body = json_decode($rawBody, true);
-            if (!is_array($body)) {
-                parse_str($rawBody, $body);
-            }
-
-            // token 可来自 header / query / body
-            $auth = $request->header('x-internal-token');
-            if ($auth === null || $auth === '') {
-                $auth = $request->get('token', $body['token'] ?? '');
-            }
-
-            if ($auth !== $token) {
-                return $connection->send(new HttpResponse(403, [], json_encode(['status' => false, 'message' => 'forbidden'])));
-            }
-
-            if ($path === '/publish' && $request->method() === 'POST') {
-                $channel = $body['channel'] ?? '';
-                $event   = $body['event'] ?? '';
-                $data    = is_array($body['data'] ?? null) ? $body['data'] : [];
-
-                if (!$this->isValidChannel($channel) || $event === '') {
-                    return $connection->send(new HttpResponse(200, [], json_encode(['status' => false, 'message' => 'bad payload'])));
-                }
-
-                $sent = $this->publish($channel, $event, $data);
-                return $connection->send(new HttpResponse(200, [], json_encode(['status' => true, 'sent' => $sent])));
-            }
-
-            if ($path === '/online' && $request->method() === 'GET') {
-                $user = (int) $request->get('user', 0);
-                return $connection->send(new HttpResponse(200, [], json_encode([
-                    'status' => true,
-                    'online' => $user > 0 && ($this->onlineUsers[$user] ?? 0) > 0,
-                ])));
-            }
-
-            return $connection->send(new HttpResponse(200, [], json_encode(['status' => true])));
-        };
-
-        // ---- 对外 WebSocket 服务 ----
         $ws = new Worker("websocket://0.0.0.0:{$wsPort}");
-        $ws->count = 1;
+        $ws->count = 1; // 必须单进程：订阅状态在内存中
         $ws->name = 'chatter-ws';
+
+        $ws->onWorkerStart = function () {
+            // 启动时不重放历史事件
+            try {
+                $this->lastEventId = (int) (DB::table('chat_events')->max('id') ?? 0);
+            } catch (\Throwable $e) {
+                $this->lastEventId = 0;
+            }
+
+            // 每 250ms 轮询待广播事件
+            Timer::add(0.25, function () {
+                try {
+                    $events = DB::table('chat_events')
+                        ->where('id', '>', $this->lastEventId)
+                        ->orderBy('id')
+                        ->limit(200)
+                        ->get();
+
+                    foreach ($events as $event) {
+                        $this->dispatch($event->channel, $event->event, json_decode((string) $event->data, true) ?: []);
+                        $this->lastEventId = (int) $event->id;
+                    }
+
+                    // 低频清理一天前的事件
+                    if (random_int(1, 500) === 1) {
+                        DB::table('chat_events')->where('created_at', '<', now()->subDay())->delete();
+                    }
+                } catch (\Throwable $e) {
+                    // 长进程常见 MySQL gone away，断开后下次轮询自动重连
+                    try {
+                        DB::disconnect();
+                    } catch (\Throwable $ignored) {
+                    }
+                }
+            });
+        };
 
         $ws->onConnect = function (TcpConnection $connection) {
             $connection->channels = [];
@@ -127,9 +105,7 @@ class ServeWebSocket extends Command
                 return;
             }
 
-            $type = $payload['type'] ?? '';
-
-            switch ($type) {
+            switch ($payload['type'] ?? '') {
                 case 'ping':
                     $connection->send(json_encode(['type' => 'pong']));
                     return;
@@ -139,7 +115,8 @@ class ServeWebSocket extends Command
                     $ok = [];
                     if (is_array($channels)) {
                         foreach ($channels as $channel) {
-                            if ($this->isValidChannel((string) $channel) && !isset($connection->channels[$channel])) {
+                            $channel = (string) $channel;
+                            if ($this->isValidChannel($channel) && !isset($connection->channels[$channel])) {
                                 $connection->channels[$channel] = true;
                                 $this->channelClients[$channel][$connection->id] = $connection;
                                 $this->incOnline($channel);
@@ -180,26 +157,39 @@ class ServeWebSocket extends Command
         return (bool) preg_match('/^[A-Za-z0-9_.\-]{3,64}$/', $channel);
     }
 
-    protected function publish(string $channel, string $event, array $data): int
+    protected function dispatch(string $channel, string $event, array $data): void
     {
         $clients = $this->channelClients[$channel] ?? [];
+        if (!$clients) {
+            return;
+        }
         $frame = json_encode(['type' => 'event', 'channel' => $channel, 'event' => $event, 'data' => $data], JSON_UNESCAPED_UNICODE);
         foreach ($clients as $client) {
             $client->send($frame);
         }
-        return count($clients);
     }
 
     protected function incOnline(string $channel): void
     {
         if (preg_match('/^user\.(\d+)\./', $channel, $m)) {
             $userId = (int) $m[1];
+            $wasOffline = ($this->onlineUsers[$userId] ?? 0) === 0;
             $this->onlineUsers[$userId] = ($this->onlineUsers[$userId] ?? 0) + 1;
+            if ($wasOffline) {
+                try {
+                    DB::table('users')->where('id', $userId)->update(['is_online' => 1, 'online_at' => now()]);
+                } catch (\Throwable $e) {
+                    DB::disconnect();
+                }
+            }
         }
     }
 
     protected function removeFromChannel(TcpConnection $connection, string $channel): void
     {
+        if (isset($connection->channels[$channel])) {
+            unset($connection->channels[$channel]);
+        }
         if (isset($this->channelClients[$channel][$connection->id])) {
             unset($this->channelClients[$channel][$connection->id]);
             if (empty($this->channelClients[$channel])) {
@@ -211,12 +201,14 @@ class ServeWebSocket extends Command
                     $this->onlineUsers[$userId]--;
                     if ($this->onlineUsers[$userId] <= 0) {
                         unset($this->onlineUsers[$userId]);
+                        try {
+                            DB::table('users')->where('id', $userId)->update(['is_online' => 0]);
+                        } catch (\Throwable $e) {
+                            DB::disconnect();
+                        }
                     }
                 }
             }
-        }
-        if (isset($connection->channels[$channel])) {
-            unset($connection->channels[$channel]);
         }
     }
 }
